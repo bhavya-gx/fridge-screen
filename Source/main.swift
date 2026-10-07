@@ -1,6 +1,7 @@
 import Cocoa
 import QuartzCore
 import ImageIO
+import Carbon.HIToolbox
 // Fridge only reads newly created screenshots. Originals remain in their saved location.
 struct ScreenshotIdentity: Hashable { let path: String; let created: Date }
 struct ScreenshotScan {
@@ -19,6 +20,43 @@ struct ScreenshotScan {
         let custom = UserDefaults(suiteName: "com.apple.screencapture")?.string(forKey: "name")?.lowercased()
         return name.hasPrefix("screenshot") || name.hasPrefix("screen shot") || (custom.map { name.hasPrefix($0) } ?? false)
     }
+}
+
+enum Clipboard {
+    // Copies the original file's pixels, so a paste keeps full resolution. The magnet itself
+    // only holds a display thumbnail; that is used only if the original has moved or is unreadable.
+    static func writeOriginal(_ url: URL, fallback: NSImage, to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        guard let data = try? Data(contentsOf: url), let tiff = NSImage(data: data)?.tiffRepresentation else {
+            pasteboard.writeObjects([fallback]); return
+        }
+        let item = NSPasteboardItem()
+        if url.pathExtension.lowercased() == "png" { item.setData(data, forType: .png) }
+        item.setData(tiff, forType: .tiff)
+        pasteboard.writeObjects([item])
+    }
+}
+
+enum Status {
+    // A folder error always wins, so pausing and resuming can never paper over a failing watcher.
+    static func title(error: String?, paused: Bool) -> String {
+        error ?? (paused ? "Capture watching paused" : "Watching for screenshots")
+    }
+}
+
+enum KeepShortcut {
+    static let label = "⌃⌥⌘K"
+    // Non-exclusive Carbon hot key: no Accessibility or Input Monitoring permission needed.
+    static func register(_ ref: inout EventHotKeyRef?) -> Bool {
+        RegisterEventHotKey(UInt32(kVK_ANSI_K), UInt32(cmdKey | optionKey | controlKey),
+                            EventHotKeyID(signature: OSType(0x46524447), id: 1), // "FRDG"
+                            GetApplicationEventTarget(), 0, &ref) == noErr
+    }
+}
+
+func systemScreenshotFolder() -> URL {
+    let configured = UserDefaults(suiteName: "com.apple.screencapture")?.string(forKey: "location") ?? "~/Desktop"
+    return URL(fileURLWithPath: (configured as NSString).expandingTildeInPath, isDirectory: true)
 }
 
 final class ScreenshotWatcher {
@@ -229,7 +267,7 @@ final class PinView: NSView, NSDraggingSource, NSMenuDelegate {
     func menuDidClose(_ menu:NSMenu) {menuChanged?(false);hoverChanged?(window?.frame.contains(NSEvent.mouseLocation) ?? false)}
     @objc func openFile() { NSWorkspace.shared.open(url) }
     @objc func reveal() { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-    @objc func copyImage() { NSPasteboard.general.clearContents(); NSPasteboard.general.writeObjects([image]) }
+    @objc func copyImage() { Clipboard.writeOriginal(url, fallback: image, to: .general) }
     @objc func removePin() { dismiss?() }
     func snap() {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
@@ -256,7 +294,7 @@ final class Pin {
         panel.isFloatingPanel=true; panel.level = .floating; panel.isOpaque=false; panel.backgroundColor = .clear; panel.hasShadow=false; panel.hidesOnDeactivate=false; panel.isReleasedWhenClosed=false
         panel.collectionBehavior=[.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
         view=PinView(image:image,url:url,kind:kind,frame:NSRect(x:0,y:0,width:width,height:height)); panel.contentView=view
-        panel.sharingType = .readOnly // Keep magnets visible to screen-recording tools.
+        panel.sharingType = .none // Hidden from screen capture by default; FridgeApp.sharing opts in.
     }
 }
 
@@ -282,6 +320,14 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
     var folderItem:NSMenuItem!
     var healthItem:NSMenuItem!
     var pauseItem:NSMenuItem!
+    var captureItem:NSMenuItem!
+    var keepItem:NSMenuItem!
+    var hotKey:EventHotKeyRef?
+    // Off by default: a screenshot of something private must not pop onto a screen share.
+    var visibleToCapture:Bool { UserDefaults.standard.bool(forKey:"visibleToCapture") }
+    var sharing:NSWindow.SharingType { visibleToCapture ? .readOnly : .none }
+    var reduceMotion:Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    var demoDirectory:URL { FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask).first!.appendingPathComponent("com.local.fridge",isDirectory:true) }
     init(folder: URL) { self.folder=folder; super.init() }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -295,19 +341,76 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
         addMenu("Open Fridge…",#selector(showWelcome),"o")
         addMenu("Try magnet animation",#selector(demo),"d")
         addMenu("Take screenshot…",#selector(capture),"s")
+        keepItem=addMenu("Keep latest screenshot",#selector(keepLatest),"")
         pauseItem=addMenu("Pause capture watching",#selector(togglePause),"p")
         addMenu("Choose screenshot folder…",#selector(chooseFolder),"")
+        addMenu("Use macOS screenshot folder",#selector(useSystemFolder),"")
+        captureItem=addMenu("Show magnets in screen recordings",#selector(toggleCaptureVisibility),"")
+        captureItem.state=visibleToCapture ? .on : .off
         addMenu("Clear magnets",#selector(clearPins),"k")
         savedItem=NSMenuItem(title:"Saved magnets (0)",action:nil,keyEquivalent:"");savedItem.submenu=savedMenu;menu.addItem(savedItem)
-        let appMenu=NSMenu();let appRoot=NSMenuItem();appMenu.addItem(appRoot);let commands=NSMenu();appRoot.submenu=commands
-        let quitItem=NSMenuItem(title:"Quit Fridge",action:#selector(quit),keyEquivalent:"q");quitItem.target=self;commands.addItem(quitItem);NSApp.mainMenu=appMenu
-        ticker=Timer(timeInterval:0.1,repeats:true){[weak self] _ in self?.tick()};RunLoop.main.add(ticker!,forMode:.common)
+        NSApp.mainMenu=makeMainMenu()
+        clearOldDemos()
+        registerKeepHotKey()
         menu.addItem(.separator()); addMenu("Quit Fridge",#selector(quit),"q")
         startWatching()
         showWelcome()
         globalMonitor=NSEvent.addGlobalMonitorForEvents(matching:[.leftMouseDown,.rightMouseDown,.keyDown]) { [weak self] _ in self?.hidePreview() }
         NotificationCenter.default.addObserver(self,selector:#selector(screensChanged),name:NSApplication.didChangeScreenParametersNotification,object:nil)
         if CommandLine.arguments.contains("--demo") { DispatchQueue.main.asyncAfter(deadline:.now()+0.5) { self.demo() } }
+    }
+    func makeMainMenu()->NSMenu {
+        let main=NSMenu()
+        func submenu(_ title:String,_ items:[(String,Selector,String,NSEvent.ModifierFlags)])->NSMenuItem {
+            let root=NSMenuItem();let m=NSMenu(title:title);root.submenu=m;main.addItem(root)
+            for (t,a,k,mods) in items { let i=m.addItem(withTitle:t,action:a,keyEquivalent:k); i.keyEquivalentModifierMask=mods }
+            return root
+        }
+        let app=submenu("Fridge",[("Quit Fridge",#selector(quit),"q",.command)]); app.submenu?.items.first?.target=self
+        _=submenu("Edit",[("Undo",Selector(("undo:")),"z",.command),("Redo",Selector(("redo:")),"z",[.command,.shift]),
+                          ("Cut",#selector(NSText.cut(_:)),"x",.command),("Copy",#selector(NSText.copy(_:)),"c",.command),
+                          ("Paste",#selector(NSText.paste(_:)),"v",.command),("Select All",#selector(NSText.selectAll(_:)),"a",.command)])
+        _=submenu("Window",[("Minimize",#selector(NSWindow.performMiniaturize(_:)),"m",.command),("Close",#selector(NSWindow.performClose(_:)),"w",.command)])
+        return main
+    }
+    // A keyboard path to keep a magnet before its five seconds run out. Carbon hot keys need no
+    // Accessibility or Input Monitoring permission. If another app owns the shortcut, the menu item still works.
+    func registerKeepHotKey() {
+        var spec=EventTypeSpec(eventClass:OSType(kEventClassKeyboard),eventKind:UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(),{ _,_,user in
+            guard let user else {return noErr}
+            let app=Unmanaged<FridgeApp>.fromOpaque(user).takeUnretainedValue()
+            DispatchQueue.main.async { app.keepLatest() }
+            return noErr
+        },1,&spec,Unmanaged.passUnretained(self).toOpaque(),nil)
+        // Only advertise the shortcut if it actually registered; the menu item works either way.
+        if KeepShortcut.register(&hotKey) {keepItem.title="Keep latest screenshot   \(KeepShortcut.label)"}
+    }
+    @objc func keepLatest() {
+        guard let pin=pins.first(where:{ !$0.leaving && !$0.life.pinned }) else {NSSound.beep();return}
+        pin.view.keep?()
+    }
+    @objc func toggleCaptureVisibility() {
+        UserDefaults.standard.set(!visibleToCapture,forKey:"visibleToCapture")
+        captureItem.state=visibleToCapture ? .on : .off
+        pins.forEach{$0.panel.sharingType=sharing};overflowPanels.forEach{$0.sharingType=sharing};preview?.sharingType=sharing
+    }
+    @objc func useSystemFolder() {
+        UserDefaults.standard.removeObject(forKey:"screenshotFolder");folder=systemScreenshotFolder();startWatching()
+    }
+    // Demo images are Fridge's own cache files, never screenshots. Clear the last session's on launch.
+    func clearOldDemos() {
+        let files=(try? FileManager.default.contentsOfDirectory(at:demoDirectory,includingPropertiesForKeys:nil)) ?? []
+        for f in files where f.lastPathComponent.hasPrefix("Fridge-demo-") && f.pathExtension=="png" { try? FileManager.default.removeItem(at:f) }
+    }
+    func refreshStatus() {
+        healthItem.title=Status.title(error:errorText,paused:paused);welcomeStatus?.stringValue=healthItem.title
+    }
+    // The countdown only runs while a magnet is actually counting down, not 10x a second all day.
+    func startTicker() {
+        guard ticker==nil else {return}
+        lastTick=ProcessInfo.processInfo.systemUptime
+        let t=Timer(timeInterval:0.1,repeats:true){[weak self] _ in self?.tick()};RunLoop.main.add(t,forMode:.common);ticker=t
     }
     @objc func showWelcome() {
         NSApp.setActivationPolicy(.regular)
@@ -343,16 +446,16 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
         watcher?.stop()
         let w=ScreenshotWatcher(folder:folder)
         w.onImage={ [weak self] url,image in guard let self,!self.paused else {return}; self.addPin(url:url,image:NSImage(cgImage:image,size:NSSize(width:image.width,height:image.height))) }
-        w.onError={ [weak self] message in guard let self else {return}; self.errorText=message; self.healthItem.title=message ?? (self.paused ? "Capture watching paused" : "Watching for screenshots"); self.welcomeStatus?.stringValue=self.healthItem.title }
+        w.onError={ [weak self] message in guard let self else {return}; self.errorText=message; self.refreshStatus() }
         watcher=w; w.start(); folderItem.title=folder.path; welcomeFolder?.stringValue=folder.path
     }
     func addPin(url:URL,image:NSImage) {
         guard let screen=NSScreen.screens.first(where:{$0.frame.contains(NSEvent.mouseLocation)}) ?? NSScreen.main else {return}
         hidePreview()
-        let pin=Pin(url:url,image:image,kind:count,screen:screen); count+=1
+        let pin=Pin(url:url,image:image,kind:count,screen:screen); count+=1; pin.panel.sharingType=sharing
         pin.view.dismiss={ [weak self,weak pin] in if let pin {self?.remove(pin)} }
         pin.view.peek={ [weak self,weak pin] show in guard let self,let pin else{return}; if show {self.showPreview(pin)} else {self.hidePreview()} }
-        pins.insert(pin,at:0)
+        pins.insert(pin,at:0); startTicker()
         pin.view.keep={ [weak self,weak pin] in
             guard let self,let pin,!pin.leaving else{return}
             if pin.life.pinned {self.remove(pin)} else {pin.life.pinned=true;pin.view.setPinned(true);self.refreshSavedMenu();self.layout()}
@@ -373,6 +476,7 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
         for pin in pins where !pin.leaving {
             if pin.life.advance(elapsed) {remove(pin)} else {pin.view.showRemaining(pin.life.remaining)}
         }
+        if !pins.contains(where:{ !$0.leaving && !$0.life.pinned }) {ticker?.invalidate();ticker=nil}
     }
     func visiblePins(on screen:NSScreen)->[Pin] {
         var space=screen.visibleFrame.height-75
@@ -392,7 +496,7 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
         for p in pins where p !== except && !p.leaving {
             if visiblePins(on:p.screen).contains(where:{$0===p}) {
                 p.panel.orderFrontRegardless();let f=targetFrame(p)
-                NSAnimationContext.runAnimationGroup{c in c.duration=0.22;p.panel.animator().setFrame(f,display:true)}
+                if reduceMotion {p.panel.setFrame(f,display:true)} else {NSAnimationContext.runAnimationGroup{c in c.duration=0.22;p.panel.animator().setFrame(f,display:true)}}
             } else {p.panel.orderOut(nil);p.life.hovered=false}
         }
         refreshOverflow()
@@ -411,7 +515,7 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
             let count=pins.filter{p in p.screen==screen && p.life.pinned && !p.leaving && !visible.contains(where:{$0===p})}.count
             guard count>0 else {continue}
             let frame=NSRect(x:screen.visibleFrame.maxX-182,y:screen.visibleFrame.minY+12,width:166,height:34)
-            let p=NSPanel(contentRect:frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false);p.level = .floating;p.isReleasedWhenClosed=false;p.hidesOnDeactivate=false;p.collectionBehavior=[.canJoinAllSpaces,.fullScreenAuxiliary];p.isOpaque=false;p.backgroundColor = .clear
+            let p=NSPanel(contentRect:frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false);p.level = .floating;p.isReleasedWhenClosed=false;p.hidesOnDeactivate=false;p.collectionBehavior=[.canJoinAllSpaces,.fullScreenAuxiliary];p.isOpaque=false;p.backgroundColor = .clear;p.sharingType=sharing
             let b=NSButton(title:"+\(count) saved magnets",target:self,action:#selector(openSaved(_:)));b.frame=NSRect(origin:.zero,size:frame.size);b.bezelStyle = .rounded;p.contentView=b;p.orderFrontRegardless();overflowPanels.append(p)
         }
     }
@@ -438,13 +542,13 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
         let p=NSPanel(contentRect:frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         p.level = .floating; p.isReleasedWhenClosed=false;p.backgroundColor=NSColor(calibratedRed:0.98,green:0.97,blue:0.93,alpha:1);p.hasShadow=true;p.hidesOnDeactivate=false;p.ignoresMouseEvents=true
         p.collectionBehavior=[.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
-        let iv=NSImageView(frame:NSRect(origin:.zero,size:frame.size));iv.image=pin.view.image;iv.imageScaling = .scaleProportionallyUpOrDown;p.contentView=iv;p.sharingType = .readOnly
+        let iv=NSImageView(frame:NSRect(origin:.zero,size:frame.size));iv.image=pin.view.image;iv.imageScaling = .scaleProportionallyUpOrDown;p.contentView=iv;p.sharingType=sharing
         p.orderFrontRegardless();preview=p
     }
     func hidePreview() {preview?.orderOut(nil);preview=nil}
     @objc func screensChanged() {hidePreview();guard let screen=NSScreen.main else{return};for p in pins {p.screen=screen};layout()}
     @objc func clearPins() {hidePreview();pins.forEach{$0.panel.orderOut(nil)};pins.removeAll();overflowPanels.forEach{$0.orderOut(nil)};overflowPanels=[];refreshSavedMenu()}
-    @objc func togglePause() {paused.toggle();pauseItem.title=paused ? "Resume capture watching":"Pause capture watching";healthItem.title=paused ? "Capture watching paused":"Watching for screenshots"}
+    @objc func togglePause() {paused.toggle();pauseItem.title=paused ? "Resume capture watching":"Pause capture watching";refreshStatus()}
     @objc func showFolder() {NSWorkspace.shared.open(folder)}
     @objc func chooseFolder() {
         NSApp.activate(ignoringOtherApps:true)
@@ -465,11 +569,19 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
         let line=NSBezierPath();line.move(to:NSPoint(x:45,y:70));for p in [NSPoint(x:130,y:100),NSPoint(x:225,y:88),NSPoint(x:330,y:167),NSPoint(x:420,y:154),NSPoint(x:540,y:238),NSPoint(x:675,y:260)]{line.line(to:p)};ink.setStroke();line.lineWidth=5;line.stroke()
         ("FRIDGE  /  DEMO CAPTURE" as NSString).draw(at:NSPoint(x:44,y:26),withAttributes:[.font:NSFont.monospacedSystemFont(ofSize:12,weight:.medium),.foregroundColor:NSColor.gray])
         image.unlockFocus()
-        let dir=FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask).first!.appendingPathComponent("com.local.fridge",isDirectory:true)
+        let dir=demoDirectory
         do {try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);let url=dir.appendingPathComponent("Fridge-demo-\(UUID().uuidString.prefix(8)).png");if let data=image.tiffRepresentation,let rep=NSBitmapImageRep(data:data),let png=rep.representation(using:.png,properties:[:]){try png.write(to:url);addPin(url:url,image:image)}}catch{healthItem.title="Could not create demo: \(error.localizedDescription)"}
     }
     @objc func quit(){NSApp.terminate(nil)}
-    func applicationWillTerminate(_ notification:Notification) {ticker?.invalidate();watcher?.stop();if let globalMonitor{NSEvent.removeMonitor(globalMonitor)}}
+    func applicationWillTerminate(_ notification:Notification) {ticker?.invalidate();watcher?.stop();if let hotKey{UnregisterEventHotKey(hotKey)};if let globalMonitor{NSEvent.removeMonitor(globalMonitor)}}
+}
+
+extension FridgeApp: NSMenuItemValidation {
+    func validateMenuItem(_ item:NSMenuItem)->Bool {
+        if item.action==#selector(useSystemFolder) {return UserDefaults.standard.string(forKey:"screenshotFolder") != nil}
+        if item.action==#selector(keepLatest) {return pins.contains{ !$0.leaving && !$0.life.pinned }}
+        return true
+    }
 }
 
 if CommandLine.arguments.contains("--watch-test") {
@@ -519,12 +631,29 @@ if CommandLine.arguments.contains("--self-test") {
     life.dragging=false;life.menuOpen=true;precondition(!life.advance(10) && life.remaining==1)
     life.menuOpen=false;life.pinned=true;precondition(!life.advance(100) && life.remaining==1)
     life.pinned=false;precondition(life.advance(1));precondition(!life.advance(1))
-    print("PASS: classification, deduplication, five-second expiry, hover/menu/drag pauses, persistent pin, single expiry")
+    // Copy image keeps full resolution (uses a private pasteboard, never the user's clipboard).
+    let wide=NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:3000,pixelsHigh:40,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0)!
+    let original=dir.appendingPathComponent("Screenshot wide.png"); try wide.representation(using:.png,properties:[:])!.write(to:original)
+    let board=NSPasteboard(name:NSPasteboard.Name("fridge-test-\(UUID().uuidString)")); defer {board.releaseGlobally()}
+    let thumb=NSImage(size:NSSize(width:160,height:2))
+    thumb.addRepresentation(NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:160,pixelsHigh:2,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0)!)
+    Clipboard.writeOriginal(original,fallback:thumb,to:board)
+    precondition(NSBitmapImageRep(data:board.data(forType:.png)!)!.pixelsWide==3000)
+    precondition(NSBitmapImageRep(data:board.data(forType:.tiff)!)!.pixelsWide==3000)
+    Clipboard.writeOriginal(dir.appendingPathComponent("moved.png"),fallback:thumb,to:board)
+    // Original gone: falls back to the thumbnail rather than copying nothing.
+    precondition(board.data(forType:.png)==nil && NSBitmapImageRep(data:board.data(forType:.tiff)!)!.pixelsWide==160)
+    // The keep shortcut registers with the exact key and modifiers the app uses.
+    var shortcut:EventHotKeyRef?
+    precondition(KeepShortcut.register(&shortcut)); UnregisterEventHotKey(shortcut!)
+    // A folder error is never hidden by pause/resume.
+    precondition(Status.title(error:"Can’t read",paused:true)=="Can’t read" && Status.title(error:"Can’t read",paused:false)=="Can’t read")
+    precondition(Status.title(error:nil,paused:true)=="Capture watching paused" && Status.title(error:nil,paused:false)=="Watching for screenshots")
+    print("PASS: classification, deduplication, five-second expiry, hover/menu/drag pauses, persistent pin, single expiry, full-resolution copy, status precedence, keep shortcut")
     exit(0)
 }
 let prefs=UserDefaults.standard
-let configured=prefs.string(forKey:"screenshotFolder") ?? UserDefaults(suiteName:"com.apple.screencapture")?.string(forKey:"location") ?? "~/Desktop"
-let folder=URL(fileURLWithPath:(configured as NSString).expandingTildeInPath,isDirectory:true)
+let folder=prefs.string(forKey:"screenshotFolder").map{URL(fileURLWithPath:($0 as NSString).expandingTildeInPath,isDirectory:true)} ?? systemScreenshotFolder()
 let app=NSApplication.shared
 let delegate=FridgeApp(folder:folder)
 app.delegate=delegate

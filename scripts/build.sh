@@ -8,7 +8,7 @@ cp LICENSE "$FRIDGE_APP/Contents/Resources/LICENSE"
 cp Resources/Info.plist "$FRIDGE_APP/Contents/Info.plist"
 xcrun swiftc -O -target "${FRIDGE_ARCH}-apple-macos14.0" \
   -module-cache-path .build/module-cache \
-  -framework Cocoa -framework QuartzCore -framework ImageIO \
+  -framework Cocoa -framework QuartzCore -framework ImageIO -framework Carbon \
   -o "$FRIDGE_APP/Contents/MacOS/Fridge" Source/main.swift
 codesign --force --sign - "$FRIDGE_APP"
 codesign --verify --strict "$FRIDGE_APP"

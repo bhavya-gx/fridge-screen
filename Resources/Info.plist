@@ -15,18 +15,26 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2.0</string>
+	<string>0.3.0</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>4</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<false/>
 	<key>NSDesktopFolderUsageDescription</key>
-	<string>Fridge watches for new screenshots and shows them as magnets on your desktop.</string>
+	<string>Fridge watches your screenshot folder for new screenshots and shows them as magnets. It only reads new screenshots and never changes them.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Fridge watches your screenshot folder for new screenshots and shows them as magnets. It only reads new screenshots and never changes them.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Fridge watches your screenshot folder for new screenshots and shows them as magnets. It only reads new screenshots and never changes them.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Fridge watches your screenshot folder for new screenshots and shows them as magnets. It only reads new screenshots and never changes them.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Fridge watches your screenshot folder for new screenshots and shows them as magnets. It only reads new screenshots and never changes them.</string>
 </dict>
 </plist>
