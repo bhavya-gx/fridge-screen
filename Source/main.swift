@@ -1,7 +1,7 @@
 import Cocoa
 import QuartzCore
 import ImageIO
-// Fridge only reads newly created screenshots. Originals remain in their saved location.
+// magnet only reads newly created screenshots. Originals remain in their saved location.
 struct ScreenshotIdentity: Hashable { let path: String; let created: Date }
 struct ScreenshotScan {
     static let extensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tiff", "tif"]
@@ -75,7 +75,7 @@ final class ScreenshotWatcher {
             known.formIntersection(current)
             pending = pending.filter { current.contains($0.key) }
         } catch {
-            DispatchQueue.main.async { [weak self] in self?.onError?("Can’t read screenshot folder. Choose a folder in the Fridge menu.") }
+            DispatchQueue.main.async { [weak self] in self?.onError?("Can’t read screenshot folder. Choose a folder in the magnet menu.") }
         }
     }
 }
@@ -242,7 +242,7 @@ final class Pin {
     }
 }
 
-final class FridgeApp: NSObject, NSApplicationDelegate {
+final class MagnetApp: NSObject, NSApplicationDelegate {
     var welcome:NSWindow?
     var welcomeStatus:NSTextField?
     var welcomeFolder:NSTextField?
@@ -268,13 +268,13 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         statusItem=NSStatusBar.system.statusItem(withLength:NSStatusItem.squareLength)
-        statusItem.button?.image=NSImage(systemSymbolName:"pin.fill",accessibilityDescription:"Fridge screenshots")
+        statusItem.button?.image=NSImage(systemSymbolName:"pin.fill",accessibilityDescription:"magnet screenshots")
         menu=NSMenu(); statusItem.menu=menu
-        let title=NSMenuItem(title:"Fridge · Screenshot magnets",action:nil,keyEquivalent:""); menu.addItem(title)
+        let title=NSMenuItem(title:"magnet · Screenshot magnets",action:nil,keyEquivalent:""); menu.addItem(title)
         healthItem=NSMenuItem(title:"Watching for screenshots",action:nil,keyEquivalent:""); menu.addItem(healthItem)
         folderItem=NSMenuItem(title:folder.path,action:#selector(showFolder),keyEquivalent:""); folderItem.target=self; menu.addItem(folderItem)
         menu.addItem(.separator())
-        addMenu("Open Fridge…",#selector(showWelcome),"o")
+        addMenu("Open magnet…",#selector(showWelcome),"o")
         addMenu("Try magnet animation",#selector(demo),"d")
         addMenu("Take screenshot…",#selector(capture),"s")
         pauseItem=addMenu("Pause capture watching",#selector(togglePause),"p")
@@ -282,9 +282,9 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
         addMenu("Clear magnets",#selector(clearPins),"k")
         savedItem=NSMenuItem(title:"Saved magnets (0)",action:nil,keyEquivalent:"");savedItem.submenu=savedMenu;menu.addItem(savedItem)
         let appMenu=NSMenu();let appRoot=NSMenuItem();appMenu.addItem(appRoot);let commands=NSMenu();appRoot.submenu=commands
-        let quitItem=NSMenuItem(title:"Quit Fridge",action:#selector(quit),keyEquivalent:"q");quitItem.target=self;commands.addItem(quitItem);NSApp.mainMenu=appMenu
+        let quitItem=NSMenuItem(title:"Quit magnet",action:#selector(quit),keyEquivalent:"q");quitItem.target=self;commands.addItem(quitItem);NSApp.mainMenu=appMenu
         ticker=Timer(timeInterval:0.1,repeats:true){[weak self] _ in self?.tick()};RunLoop.main.add(ticker!,forMode:.common)
-        menu.addItem(.separator()); addMenu("Quit Fridge",#selector(quit),"q")
+        menu.addItem(.separator()); addMenu("Quit magnet",#selector(quit),"q")
         startWatching()
         showWelcome()
         globalMonitor=NSEvent.addGlobalMonitorForEvents(matching:[.leftMouseDown,.rightMouseDown,.keyDown]) { [weak self] _ in self?.hidePreview() }
@@ -295,13 +295,13 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         if welcome == nil {
             let w=NSWindow(contentRect:NSRect(x:0,y:0,width:510,height:355),styleMask:[.titled,.closable,.miniaturizable],backing:.buffered,defer:false)
-            w.title="Fridge"; w.isReleasedWhenClosed=false
+            w.title="magnet"; w.isReleasedWhenClosed=false
             let content=NSView(frame:NSRect(x:0,y:0,width:510,height:355)); w.contentView=content
             func label(_ text:String,_ x:CGFloat,_ y:CGFloat,_ width:CGFloat,_ height:CGFloat,_ size:CGFloat,_ bold:Bool=false)->NSTextField {
                 let l=NSTextField(wrappingLabelWithString:text);l.frame=NSRect(x:x,y:y,width:width,height:height);l.font=NSFont.systemFont(ofSize:size,weight:bold ? .semibold:.regular);content.addSubview(l);return l
             }
             let icon=NSImageView(frame:NSRect(x:25,y:256,width:78,height:78));icon.image=magnetImage(kind:0);content.addSubview(icon)
-            _=label("Fridge is ready.",110,285,350,33,27,true)
+            _=label("magnet is ready.",110,285,350,33,27,true)
             _=label("Screenshots that stick.",111,259,350,25,16)
             _=label("Take a screenshot with ⌘⇧4. It fades after 5 seconds. Click the magnet to keep it; click again to release.",32,185,446,53,16)
             welcomeStatus=label("Watching for screenshots",32,152,446,23,13,true)
@@ -448,7 +448,7 @@ final class FridgeApp: NSObject, NSApplicationDelegate {
         ("FRIDGE  /  DEMO CAPTURE" as NSString).draw(at:NSPoint(x:44,y:26),withAttributes:[.font:NSFont.monospacedSystemFont(ofSize:12,weight:.medium),.foregroundColor:NSColor.gray])
         image.unlockFocus()
         let dir=FileManager.default.urls(for:.cachesDirectory,in:.userDomainMask).first!.appendingPathComponent("com.local.fridge",isDirectory:true)
-        do {try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);let url=dir.appendingPathComponent("Fridge-demo-\(UUID().uuidString.prefix(8)).png");if let data=image.tiffRepresentation,let rep=NSBitmapImageRep(data:data),let png=rep.representation(using:.png,properties:[:]){try png.write(to:url);addPin(url:url,image:image)}}catch{healthItem.title="Could not create demo: \(error.localizedDescription)"}
+        do {try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true);let url=dir.appendingPathComponent("magnet-demo-\(UUID().uuidString.prefix(8)).png");if let data=image.tiffRepresentation,let rep=NSBitmapImageRep(data:data),let png=rep.representation(using:.png,properties:[:]){try png.write(to:url);addPin(url:url,image:image)}}catch{healthItem.title="Could not create demo: \(error.localizedDescription)"}
     }
     @objc func quit(){NSApp.terminate(nil)}
     func applicationWillTerminate(_ notification:Notification) {ticker?.invalidate();watcher?.stop();if let globalMonitor{NSEvent.removeMonitor(globalMonitor)}}
@@ -508,6 +508,6 @@ let prefs=UserDefaults.standard
 let configured=prefs.string(forKey:"screenshotFolder") ?? UserDefaults(suiteName:"com.apple.screencapture")?.string(forKey:"location") ?? "~/Desktop"
 let folder=URL(fileURLWithPath:(configured as NSString).expandingTildeInPath,isDirectory:true)
 let app=NSApplication.shared
-let delegate=FridgeApp(folder:folder)
+let delegate=MagnetApp(folder:folder)
 app.delegate=delegate
 withExtendedLifetime(delegate) { app.run() }

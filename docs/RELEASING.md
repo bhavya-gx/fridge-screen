@@ -1,7 +1,7 @@
 # Publishing source and app releases
 
 1. Run `./scripts/package.sh` on macOS. This compiles arm64 and x86_64, creates a universal app, verifies its ad-hoc signature, runs tests on the host architecture, and creates a ZIP plus SHA-256 file in `dist/`.
-2. Follow `TESTING.md`. Test on actual Intel and Apple Silicon hardware before claiming full coverage of both.
+2. Test on actual Intel and Apple Silicon hardware before claiming full coverage of both.
 3. Commit source, scripts, metadata, and docs. Keep binaries and credentials out of Git.
 4. Create a version tag and GitHub prerelease; attach the universal ZIP and its SHA-256 file.
 5. State clearly that beta downloads are not Developer ID signed or Apple notarized. Link Apple's first-open instructions. Never instruct users to disable Gatekeeper.
