@@ -85,6 +85,10 @@ The GitHub Actions workflow builds and tests both architectures. Release ZIPs co
 
 To build a universal release ZIP and checksum locally, run `./scripts/package.sh`. The generated app is ad-hoc signed and unnotarized.
 
+## Official downloads and security
+
+This repository and its [Releases page](https://github.com/bhavya-in-sf/fridge-screen/releases) are the official source. Other forks are independently maintained. For suspected vulnerabilities, use the [private reporting route](https://github.com/bhavya-in-sf/fridge-screen/security/advisories/new). See [SECURITY.md](SECURITY.md) for scope and limitations.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Please omit private screenshots from bug reports.
