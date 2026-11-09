@@ -80,42 +80,24 @@ final class ScreenshotWatcher {
     }
 }
 
+// Use the system's emoji glyphs at runtime; no Apple artwork or fonts are bundled.
 func magnetImage(kind: Int) -> NSImage {
     let image = NSImage(size: NSSize(width: 76, height: 76))
     image.lockFocus()
-    let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.4); shadow.shadowBlurRadius = 4; shadow.shadowOffset = NSSize(width: 2, height: -4)
-    NSGraphicsContext.saveGraphicsState(); shadow.set()
-    let path = NSBezierPath()
-    let colors: [NSColor]
-    switch kind % 3 {
-    case 0:
-        for i in 0..<10 {
-            let angle = CGFloat(i) * .pi / 5 + .pi / 2
-            let radius: CGFloat = i % 2 == 0 ? 29 : 13
-            let point = NSPoint(x: 38 + cos(angle) * radius, y: 39 + sin(angle) * radius)
-            if i == 0 { path.move(to: point) } else { path.line(to: point) }
-        }
-        path.close(); path.lineJoinStyle = .round
-        colors = [NSColor(calibratedRed: 0.44, green: 0.55, blue: 0.96, alpha: 1), NSColor(calibratedRed: 0.06, green: 0.12, blue: 0.44, alpha: 1)]
-    case 1:
-        path.move(to: NSPoint(x: 38,y: 12)); path.curve(to: NSPoint(x: 15,y: 49), controlPoint1: NSPoint(x: 29,y: 13), controlPoint2: NSPoint(x: 12,y: 35)); path.curve(to: NSPoint(x: 61,y: 49), controlPoint1: NSPoint(x: 14,y: 67), controlPoint2: NSPoint(x: 62,y: 67)); path.curve(to: NSPoint(x: 38,y: 12), controlPoint1: NSPoint(x: 64,y: 33), controlPoint2: NSPoint(x: 47,y: 13)); path.close()
-        colors = [NSColor(calibratedRed: 0.98, green: 0.34, blue: 0.35, alpha: 1), NSColor(calibratedRed: 0.47, green: 0.02, blue: 0.08, alpha: 1)]
-    default:
-        path.appendOval(in: NSRect(x: 12,y: 20,width: 54,height: 40))
-        colors = [NSColor(calibratedRed: 0.44, green: 0.55, blue: 0.28, alpha: 1), NSColor(calibratedRed: 0.06, green: 0.16, blue: 0.08, alpha: 1)]
-    }
-    colors[1].setFill(); path.fill(); NSGraphicsContext.restoreGraphicsState()
-    NSGradient(starting: colors[1], ending: colors[0])?.draw(in: path, angle: 105)
-    if kind % 3 == 1 {
-        NSColor(calibratedRed: 0.15, green: 0.33, blue: 0.13, alpha: 1).setFill()
-        let leaf = NSBezierPath(); leaf.move(to: NSPoint(x: 20,y: 62)); for p in [NSPoint(x: 33,y: 60),NSPoint(x: 38,y: 70),NSPoint(x: 43,y: 60),NSPoint(x: 58,y: 63),NSPoint(x: 48,y: 51),NSPoint(x: 38,y: 58),NSPoint(x: 29,y: 51)] { leaf.line(to:p) }; leaf.close(); leaf.fill()
-        NSColor(calibratedRed: 0.98, green: 0.79, blue: 0.42, alpha: 0.9).setFill()
-        for p in [NSPoint(x: 25,y: 45),NSPoint(x: 38,y: 43),NSPoint(x: 50,y: 45),NSPoint(x: 30,y: 32),NSPoint(x: 43,y: 31),NSPoint(x: 37,y: 22)] { NSBezierPath(ovalIn:NSRect(x:p.x,y:p.y,width:2,height:4)).fill() }
-    } else if kind % 3 == 2 {
-        NSGradient(starting: .systemRed, ending: NSColor(calibratedRed: 0.56, green: 0.07, blue: 0.01, alpha: 1))?.draw(in: NSBezierPath(ovalIn:NSRect(x:19,y:34,width:18,height:19)), angle:-60)
-    }
-    NSColor.white.withAlphaComponent(0.35).setFill(); NSBezierPath(ovalIn:NSRect(x:29,y:49,width:12,height:4)).fill()
-    image.unlockFocus(); return image
+    let glyph = (["⭐️", "🍓", "🫒"][kind % 3]) as NSString
+    let font = NSFont(name: "Apple Color Emoji", size: 57) ?? NSFont.systemFont(ofSize: 57)
+    let attributes: [NSAttributedString.Key: Any] = [.font: font]
+    let size = glyph.size(withAttributes: attributes)
+    let shadow = NSShadow()
+    shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
+    shadow.shadowBlurRadius = 3
+    shadow.shadowOffset = NSSize(width: 0, height: -3)
+    NSGraphicsContext.saveGraphicsState()
+    shadow.set()
+    glyph.draw(at: NSPoint(x: (76-size.width)/2, y: (76-size.height)/2+3), withAttributes: attributes)
+    NSGraphicsContext.restoreGraphicsState()
+    image.unlockFocus()
+    return image
 }
 
 struct PinLifetime {
@@ -158,8 +140,8 @@ final class PinView: NSView, NSDraggingSource, NSMenuDelegate {
         self.image=image; self.url=url; self.kind=kind; self.tilt = kind % 2 == 0 ? -0.035 : 0.045
         super.init(frame:frame)
         wantsLayer=true
-        paper.wantsLayer=true; paper.layer?.backgroundColor=NSColor(calibratedRed:0.98,green:0.97,blue:0.92,alpha:1).cgColor
-        paper.layer?.cornerRadius=5; paper.layer?.shadowColor=NSColor.black.cgColor; paper.layer?.shadowOpacity=0.32; paper.layer?.shadowRadius=5; paper.layer?.shadowOffset=CGSize(width:2,height:-4)
+        paper.wantsLayer=true; paper.layer?.backgroundColor=NSColor.white.cgColor
+        paper.layer?.cornerRadius=9; paper.layer?.shadowColor=NSColor.black.cgColor; paper.layer?.shadowOpacity=0.20; paper.layer?.shadowRadius=8; paper.layer?.shadowOffset=CGSize(width:2,height:-4)
         addSubview(paper)
         photo.image=image; photo.imageScaling = .scaleProportionallyUpOrDown
         paper.addSubview(photo)
@@ -193,7 +175,7 @@ final class PinView: NSView, NSDraggingSource, NSMenuDelegate {
     func setPinned(_ value:Bool) {
         pinned=value
         magnet.layer?.transform=CATransform3DMakeTranslation(0,value ? 0:6,0)
-        magnet.alphaValue=value ? 1:0.83
+        magnet.alphaValue=1
         magnet.setAccessibilityLabel(value ? "Release pinned screenshot":"Keep screenshot pinned")
         magnet.toolTip=value ? "Click to release":"Click magnet to keep"
         if value {hint.stringValue="Pinned · click magnet to release";snap()}

@@ -11,4 +11,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build and run regression tests
-        run: ./scripts/build.sh
+        run: FRIDGE_ARCH=universal ./scripts/build.sh

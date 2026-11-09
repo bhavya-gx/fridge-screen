@@ -1,15 +1,15 @@
-# Publishing the source
+# Publishing source and app releases
 
-Publish this repository as `magnet` under the maintainer's GitHub account. This release is source-only: no prebuilt `.app`, app ZIP, DMG, signing certificates, or notarization setup is required for publishing the repository.
+1. Run `./scripts/package.sh` on macOS. This compiles arm64 and x86_64, creates a universal app, verifies its ad-hoc signature, runs tests on the host architecture, and creates a ZIP plus SHA-256 file in `dist/`.
+2. Follow `TESTING.md`. Test on actual Intel and Apple Silicon hardware before claiming full coverage of both.
+3. Commit source, scripts, metadata, and docs. Keep binaries and credentials out of Git.
+4. Create a version tag and GitHub prerelease; attach the universal ZIP and its SHA-256 file.
+5. State clearly that beta downloads are not Developer ID signed or Apple notarized. Link Apple's first-open instructions. Never instruct users to disable Gatekeeper.
+6. For a broadly distributed stable release, use Developer ID signing with hardened runtime, submit to Apple's notary service, staple and verify the ticket, and package and checksum that final app. Do not label an ad-hoc build notarized.
+7. Add a live demo only after reviewing it for private content.
 
-1. Run `./scripts/build.sh` and follow `TESTING.md`.
-2. Commit only source, resource metadata, scripts, documentation, and the MIT license. `.gitignore` excludes local build output and credentials.
-3. Push to the public repository. CI builds and tests but does not upload binaries.
-4. Review the finished live screen recording for private content, then add it to the README through a GitHub-hosted video attachment or a public video link.
-5. Optionally tag `v0.2.0`. GitHub can supply source archives automatically; do not attach compiled app assets.
+Native emoji are rendered with the system font. Do not bundle extracted Apple emoji artwork or fonts.
 
-## Suggested announcement
+## Current limitations
 
-Fridge turns screenshots into little fridge magnets on your Mac. Previews disappear after five seconds; click the magnet to keep one, and click again to release it. Hover to preview and drag into another app to share.
-
-Open source under the MIT license. Build instructions are in the README. macOS 14 or newer; pins last for the current app session.
+Pins last for the current app session. No automatic updates or launch-at-login. Full-screen and multi-display behavior need broader manual coverage. Screenshots remain local, but the app is not sandboxed or independently security-audited.
