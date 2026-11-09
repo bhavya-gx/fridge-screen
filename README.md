@@ -1,12 +1,12 @@
 # Fridge
 
-**Screenshots that stick.** A tiny native macOS utility that turns screenshot previews into fridge magnets. The GitHub repository is named `magnet`.
+**Screenshots that stick.** A tiny native macOS utility that turns screenshot previews into fridge magnets. The GitHub repository is named `fridge-screen`.
 
 Take a screenshot. Ignore it and the preview slides away after five seconds. Click its magnet and it stays within reach.
 
 ## Download the app
 
-**[Download Fridge 0.3.0 beta for Mac](https://github.com/bhavya-in-sf/magnet/releases/tag/v0.3.0-beta.1)**
+**[Download Fridge 0.3.0 beta for Mac](https://github.com/bhavya-in-sf/fridge-screen/releases/tag/v0.3.0-beta.1)**
 
 Choose **Fridge-0.3.0-macOS-universal.zip** under Assets. It includes a ready-built app for Apple Silicon and Intel Macs running macOS 14 or newer. No developer tools are needed to use the download. GitHub's separate “Source code” archives are for developers.
 
